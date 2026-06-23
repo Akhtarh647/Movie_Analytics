@@ -119,5 +119,10 @@ def index():
 
     return render_template("index.html", current_menu=menu, source=source, results=results)
 
-from asgiref.wsgi import WsgiToAsgi
-asgi_app = WsgiToAsgi(app)
+# =================================================================
+# 4. PRODUCTION RUNNER HANDLER (Fixed for Cloud Run PORT=8080)
+# =================================================================
+if __name__ == "__main__":
+    # Cloud Run injects the proper container environment port dynamically
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
