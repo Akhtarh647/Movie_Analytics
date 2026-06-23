@@ -5,7 +5,10 @@ import requests
 import psycopg2
 import json
 
-app = Flask(__name__)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+template_dir = os.path.join(current_dir, 'templates')
+
+app = Flask(__name__, template_folder=template_dir)
 
 # Environment Variables from GCP Setup
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
@@ -40,13 +43,30 @@ def index():
         except Exception:
             pass
 
-    # Step 2: Cache Miss -> Call TMDB API
+    # Step 2: Cache Miss -> Call TMDB API based on menu choice
     source = "Live API + Cloud SQL Logged"
-    tmdb_type = "movie" if menu == "movies" else "tv"
-    url = f"https://api.themoviedb.org/3/trending/{tmdb_type}/day"
+    results = []
     
-    response = requests.get(url, params={"api_key": TMDB_API_KEY})
-    results = response.json().get("results", [])[:10]
+    try:
+        if menu == "movies":
+            url = "https://api.themoviedb.org/3/trending/movie/day"
+            response = requests.get(url, params={"api_key": TMDB_API_KEY})
+            results = response.json().get("results", [])[:10]
+        elif menu == "tv":
+            url = "https://api.themoviedb.org/3/trending/tv/day"
+            response = requests.get(url, params={"api_key": TMDB_API_KEY})
+            results = response.json().get("results", [])[:10]
+        elif menu == "dramas":
+            url = "https://api.themoviedb.org/3/discover/tv"
+            params = {
+                "api_key": TMDB_API_KEY,
+                "with_genres": "18",  # Drama genre ID
+                "sort_by": "popularity.desc"
+            }
+            response = requests.get(url, params=params)
+            results = response.json().get("results", [])[:10]
+    except Exception:
+        results = []
 
     # Step 3: Cloud SQL Logging
     try:
@@ -61,7 +81,7 @@ def index():
         pass
 
     # Step 4: Write to Redis Cache
-    if redis_client:
+    if redis_client and results:
         try:
             redis_client.setex(cache_key, 3600, json.dumps(results))
         except Exception:
@@ -69,6 +89,5 @@ def index():
 
     return render_template("index.html", current_menu=menu, source=source, results=results)
 
-# Uvicorn entry wrapper integration
 from asgiref.wsgi import WsgiToAsgi
 asgi_app = WsgiToAsgi(app)
