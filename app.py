@@ -1,100 +1,99 @@
-import streamlit as st
+from fastapi import FastAPI, Depends, HTTPException
+import os
+import redis
 import requests
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import json
 
-# -----------------------------
-# API KEYS & CONFIG
-# -----------------------------
+app = FastAPI(title="FastAPI Movie Analytics")
+
+# Environment Variables config (From Cloud Run deployment settings)
+DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+DB_USER = os.getenv("DB_USER", "movie_admin")
+DB_NAME = os.getenv("DB_NAME", "movies")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "SecurePassword123!")
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+
 TMDB_API_KEY = "f676b00029651576a5a060c3ac7e1167"
 TMDB_LANGUAGE = "en-US"
 
-RAPIDAPI_URL = "https://netflix54.p.rapidapi.com/season/episodes/"
-RAPIDAPI_HEADERS = {
-    "x-rapidapi-host": "netflix54.p.rapidapi.com",
-    "x-rapidapi-key": "49bbbc0c53msh2368c300ca5b001p101de5jsn3dc6e5c2199b"
-}
+# Initialize Redis Client connection
+try:
+    redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True, socket_connect_timeout=2)
+except Exception:
+    redis_client = None
 
+# Connection helper for Cloud SQL PostgreSQL
+def get_db():
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+        yield conn
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
 
-# -----------------------------
-# FUNCTIONS
-# -----------------------------
-def fetch_trending(content_type, time_window="day"):
-    url = f"https://api.themoviedb.org/3/trending/{content_type}/{time_window}"
+@app.get("/")
+def root():
+    return {"status": "running", "platform": "FastAPI + Redis + PostgreSQL"}
+
+@app.get("/trending/{content_type}")
+def get_trending(content_type: str, db = Depends(get_db)):
+    if content_type not in ["movie", "tv"]:
+        raise HTTPException(status_code=400, detail="Invalid content type. Use 'movie' or 'tv'.")
+
+    cache_key = f"trending_{content_type}"
+
+    # 1. Check Redis cache first
+    if redis_client:
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                return {"source": "Redis Cache", "results": json.loads(cached_data)}
+        except Exception:
+            pass
+
+    # 2. Cache miss -> Call TMDB API
+    url = f"https://api.themoviedb.org/3/trending/{content_type}/day"
     params = {"api_key": TMDB_API_KEY, "language": TMDB_LANGUAGE}
     response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json().get("results", [])[:10]
-    return []
 
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch from TMDB")
 
-def fetch_dramas():
-    url = "https://api.themoviedb.org/3/discover/tv"
-    params = {
-        "api_key": TMDB_API_KEY,
-        "language": TMDB_LANGUAGE,
-        "with_genres": "18",  # Drama genre ID
-        "sort_by": "popularity.desc",
-        "page": 1
-    }
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json().get("results", [])[:10]
-    return []
+    results = response.json().get("results", [])[:10]
 
+    # 3. Store raw structures inside Cloud SQL PostgreSQL (Log search metrics or audit metadata)
+    try:
+        cursor = db.cursor()
+        # Creating sample system log table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS search_logs (
+                id SERIAL PRIMARY KEY,
+                search_type VARCHAR(50),
+                results_count INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute(
+            "INSERT INTO search_logs (search_type, results_count) VALUES (%s, %s);",
+            (cache_key, len(results))
+        )
+        db.commit()
+        cursor.close()
+    except Exception:
+        pass
 
+    # 4. Save into Redis cache for 1 hour (3600 seconds)
+    if redis_client:
+        try:
+            redis_client.setex(cache_key, 3600, json.dumps(results))
+        except Exception:
+            pass
 
-
-
-# -----------------------------
-# STREAMLIT UI
-# -----------------------------
-st.set_page_config(page_title="Movie Analytics", layout="wide")
-st.title("🎬 Scalable Movie Analytics Platform")
-
-# Sidebar menu
-menu = st.sidebar.radio(
-    "Choose a section",
-    ["Trending Movies", "Trending TV Shows", "Popular Dramas"]
-)
-
-if menu == "Trending Movies":
-    st.header("🔥 Top 10 Trending Movies")
-    movies = fetch_trending("movie")
-    for idx, movie in enumerate(movies, 1):
-        title = movie.get("title", "N/A")
-        date = movie.get("release_date", "N/A")
-        overview = movie.get("overview", "No overview available.")
-        st.subheader(f"{idx}. {title} ({date})")
-        st.write(overview)
-        poster_path = movie.get("poster_path")
-        if poster_path:
-            st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
-
-elif menu == "Trending TV Shows":
-    st.header("📺 Top 10 Trending TV Shows")
-    shows = fetch_trending("tv")
-    for idx, show in enumerate(shows, 1):
-        title = show.get("name", "N/A")
-        date = show.get("first_air_date", "N/A")
-        overview = show.get("overview", "No overview available.")
-        st.subheader(f"{idx}. {title} ({date})")
-        st.write(overview)
-        poster_path = show.get("poster_path")
-        if poster_path:
-            st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
-
-elif menu == "Popular Dramas":
-    st.header("🎭 Top 10 Popular Drama TV Shows")
-    dramas = fetch_dramas()
-    for idx, drama in enumerate(dramas, 1):
-        title = drama.get("name", "N/A")
-        date = drama.get("first_air_date", "N/A")
-        overview = drama.get("overview", "No overview available.")
-        st.subheader(f"{idx}. {title} ({date})")
-        st.write(overview)
-        poster_path = drama.get("poster_path")
-        if poster_path:
-            st.image(f"https://image.tmdb.org/t/p/w200{poster_path}")
-
-
-    else:
-        st.warning("No episodes found for this season ID.")
+    return {"source": "Live TMDB API + DB Logged", "results": results}
