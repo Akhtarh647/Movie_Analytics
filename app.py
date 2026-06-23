@@ -44,7 +44,9 @@ def index():
             pass
 
     # Step 2: Cache Miss -> Call TMDB API based on menu choice
-    source = "Live API + Cloud SQL Logged"
+    
+
+
     results = []
     
     try:
