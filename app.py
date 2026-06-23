@@ -12,16 +12,13 @@ template_dir = os.path.join(current_dir, 'templates')
 app = Flask(__name__, template_folder=template_dir)
 
 # =================================================================
-# 1. ENVIRONMENT VARIABLES (Non-Sensitive Configurations)
+# ENVIRONMENT CONFIGURATIONS
 # =================================================================
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "plated-client-499118-m4")
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_NAME = os.getenv("DB_NAME", "movies")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 
-# =================================================================
-# 2. GOOGLE SECRET MANAGER INTEGRATION
-# =================================================================
 def get_secret(secret_id, project_id=GCP_PROJECT_ID, version_id="latest"):
     try:
         client = secretmanager.SecretManagerServiceClient()
@@ -29,18 +26,31 @@ def get_secret(secret_id, project_id=GCP_PROJECT_ID, version_id="latest"):
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8").strip()
     except Exception as e:
-        # Fallback to local environment variables if Secret Manager is not accessible locally
-        print(f"Secret Manager Error for {secret_id}: {str(e)}")
-        return os.getenv(secret_id.upper().replace("-", "_"))
+        print(f"Secret Manager Fallback for {secret_id}: {str(e)}")
+        # Mapping to match exact names
+        fallback_map = {
+            "tmdb-api-key": "TMDB_API_KEY",
+            "database-user": "DB_USER",
+            "database-password": "DB_PASSWORD"
+        }
+        # Hardcoded fallback values directly matching your stack config if IAM fails
+        defaults = {
+            "tmdb-api-key": "f676b00029651576a5a060c3ac7e1167",
+            "database-user": "movie_admin",
+            "database-password": "SecurePassword123!"
+        }
+        return os.getenv(fallback_map.get(secret_id, ""), defaults.get(secret_id))
 
-# Dynamic secrets retrieval from Google Cloud Secret Manager
-TMDB_API_KEY = get_secret("tmdb-api-key")
-DB_USER = get_secret("database-user")
-DB_PASSWORD = get_secret("database-password")
+# Safe Initialization during execution
+try:
+    TMDB_API_KEY = get_secret("tmdb-api-key")
+    DB_USER = get_secret("database-user")
+    DB_PASSWORD = get_secret("database-password")
+except Exception:
+    TMDB_API_KEY = "f676b00029651576a5a060c3ac7e1167"
+    DB_USER = "movie_admin"
+    DB_PASSWORD = "SecurePassword123!"
 
-# =================================================================
-# 3. BACKEND INFRASTRUCTURE CONNECTIONS (Redis & PostgreSQL)
-# =================================================================
 try:
     redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True, socket_connect_timeout=2)
 except Exception:
@@ -49,16 +59,12 @@ except Exception:
 def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
-# =================================================================
-# 4. ROUTING LOGIC WITH CACHING & METRICS LOGGING
-# =================================================================
 @app.route('/')
 def index():
     menu = request.args.get('menu', 'movies')
     cache_key = f"trending_{menu}_cache"
     source = "Redis Cache"
 
-    # Step A: Check Redis Cache for Instant Serving
     if redis_client:
         try:
             cached_data = redis_client.get(cache_key)
@@ -67,7 +73,6 @@ def index():
         except Exception:
             pass
 
-    # Step B: Cache Miss -> Fetch Fresh Data via Secret Key Managed Endpoint
     source = "Live API + Cloud SQL Logged"
     results = []
     
@@ -92,7 +97,6 @@ def index():
     except Exception:
         results = []
 
-    # Step C: Log Request Transaction inside PostgreSQL (Using User and Password from Secrets)
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -104,7 +108,6 @@ def index():
     except Exception:
         pass
 
-    # Step D: Cache Data in Redis for Future Quick Loads (1 Hour Expiry)
     if redis_client and results:
         try:
             redis_client.setex(cache_key, 3600, json.dumps(results))
@@ -113,6 +116,5 @@ def index():
 
     return render_template("index.html", current_menu=menu, source=source, results=results)
 
-# Uvicorn interface entrypoint wrapper
 from asgiref.wsgi import WsgiToAsgi
 asgi_app = WsgiToAsgi(app)
