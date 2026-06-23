@@ -1,4 +1,4 @@
-name: "Deploy Infra and Streamlit App"
+name: "Deploy Everything to GCP"
 
 on:
   push:
@@ -6,13 +6,13 @@ on:
       - main
 
 env:
-  GCP_PROJECT_ID: "plated-client-499118-m4" # <-- REPLACE with your real Google Cloud Project ID
-  GCP_REGION: "us-central1"             # <-- REPLACE with your GCP region if different
-  SERVICE_NAME: "movie-analytics"
+  GCP_PROJECT_ID: "plated-client-499118-m4" 
+  GCP_REGION: "us-central1"             
+  SERVICE_NAME: "movie-analytics-app"
 
 jobs:
   deploy:
-    name: "Build & Deploy"
+    name: "Application Build & Push Pipeline"
     runs-on: ubuntu-latest
 
     steps:
@@ -22,32 +22,21 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }} # <-- Make sure to add this secret in GitHub Settings
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # --- Setup & Run Terraform ---
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.8.0
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false
-
-      # --- Build & Deploy Docker App to Cloud Run ---
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for GCP
         run: gcloud auth configure-docker --quiet
 
+      # This builds the image of app.py using your Dockerfile
       - name: Build and Push Container Image
         run: |
           docker build -t gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
           docker push gcr.io/${{ env.GCP_PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
 
+      # This deploys the image onto your existing Cloud Run setup
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
