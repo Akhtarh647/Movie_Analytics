@@ -1,14 +1,13 @@
-from fastapi import FastAPI, Depends, HTTPException
+from flask import Flask, jsonify
 import os
 import redis
 import requests
 import psycopg2
-from psycopg2.extras import RealDictCursor
 import json
 
-app = FastAPI(title="FastAPI Movie Analytics")
+app = Flask(__name__)
 
-# Environment Variables config (From Cloud Run deployment settings)
+# Environment variables matching your infrastructure
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_USER = os.getenv("DB_USER", "movie_admin")
 DB_NAME = os.getenv("DB_NAME", "movies")
@@ -16,84 +15,48 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "SecurePassword123!")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 
 TMDB_API_KEY = "f676b00029651576a5a060c3ac7e1167"
-TMDB_LANGUAGE = "en-US"
 
-# Initialize Redis Client connection
 try:
     redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True, socket_connect_timeout=2)
 except Exception:
     redis_client = None
 
-# Connection helper for Cloud SQL PostgreSQL
-def get_db():
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
-        yield conn
-        conn.close()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+def get_db_connection():
+    return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
-@app.get("/")
-def root():
-    return {"status": "running", "platform": "FastAPI + Redis + PostgreSQL"}
+@app.route('/')
+def home():
+    return "<h1>Flask Movie Analytics Live (via Uvicorn)!</h1>"
 
-@app.get("/trending/{content_type}")
-def get_trending(content_type: str, db = Depends(get_db)):
-    if content_type not in ["movie", "tv"]:
-        raise HTTPException(status_code=400, detail="Invalid content type. Use 'movie' or 'tv'.")
+@app.route('/movies')
+def get_movies():
+    cache_key = "trending_movies_cache"
 
-    cache_key = f"trending_{content_type}"
-
-    # 1. Check Redis cache first
     if redis_client:
-        try:
-            cached_data = redis_client.get(cache_key)
-            if cached_data:
-                return {"source": "Redis Cache", "results": json.loads(cached_data)}
-        except Exception:
-            pass
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            return jsonify({"source": "Redis Cache", "results": json.loads(cached_data)})
 
-    # 2. Cache miss -> Call TMDB API
-    url = f"https://api.themoviedb.org/3/trending/{content_type}/day"
-    params = {"api_key": TMDB_API_KEY, "language": TMDB_LANGUAGE}
-    response = requests.get(url, params=params)
+    url = "https://api.themoviedb.org/3/trending/movie/day"
+    response = requests.get(url, params={"api_key": TMDB_API_KEY})
+    movies = response.json().get("results", [])[:10]
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail="Failed to fetch from TMDB")
-
-    results = response.json().get("results", [])[:10]
-
-    # 3. Store raw structures inside Cloud SQL PostgreSQL (Log search metrics or audit metadata)
     try:
-        cursor = db.cursor()
-        # Creating sample system log table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS search_logs (
-                id SERIAL PRIMARY KEY,
-                search_type VARCHAR(50),
-                results_count INT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cursor.execute(
-            "INSERT INTO search_logs (search_type, results_count) VALUES (%s, %s);",
-            (cache_key, len(results))
-        )
-        db.commit()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS api_logs (id SERIAL, type TEXT, count INT);")
+        cursor.execute("INSERT INTO api_logs (type, count) VALUES (%s, %s);", ("movies", len(movies)))
+        conn.commit()
         cursor.close()
+        conn.close()
     except Exception:
         pass
 
-    # 4. Save into Redis cache for 1 hour (3600 seconds)
     if redis_client:
-        try:
-            redis_client.setex(cache_key, 3600, json.dumps(results))
-        except Exception:
-            pass
+        redis_client.setex(cache_key, 3600, json.dumps(movies))
 
-    return {"source": "Live TMDB API + DB Logged", "results": results}
+    return jsonify({"source": "Live API + Cloud SQL Logged", "results": movies})
+
+# Required wrapper to let Uvicorn read Flask natively as an ASGI target
+from asgiref.wsgi import WsgiToAsgi
+asgi_app = WsgiToAsgi(app)

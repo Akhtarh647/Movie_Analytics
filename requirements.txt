@@ -1,4 +1,5 @@
-fastapi
+Flask
+asgiref
 uvicorn
 redis
 psycopg2-binary
