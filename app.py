@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, render_template, request
 import os
 import redis
 import requests
@@ -7,7 +7,7 @@ import json
 
 app = Flask(__name__)
 
-# Environment variables matching your infrastructure
+# Environment Variables from GCP Setup
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_USER = os.getenv("DB_USER", "movie_admin")
 DB_NAME = os.getenv("DB_NAME", "movies")
@@ -25,38 +25,50 @@ def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
 @app.route('/')
-def home():
-    return "<h1>Flask Movie Analytics Live (via Uvicorn)!</h1>"
+def index():
+    # Detect navigation click, default is 'movies'
+    menu = request.args.get('menu', 'movies')
+    cache_key = f"trending_{menu}_cache"
+    source = "Redis Cache"
 
-@app.route('/movies')
-def get_movies():
-    cache_key = "trending_movies_cache"
-
+    # Step 1: Check Redis Cache
     if redis_client:
-        cached_data = redis_client.get(cache_key)
-        if cached_data:
-            return jsonify({"source": "Redis Cache", "results": json.loads(cached_data)})
+        try:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                return render_template("index.html", current_menu=menu, source=source, results=json.loads(cached_data))
+        except Exception:
+            pass
 
-    url = "https://api.themoviedb.org/3/trending/movie/day"
+    # Step 2: Cache Miss -> Call TMDB API
+    source = "Live API + Cloud SQL Logged"
+    tmdb_type = "movie" if menu == "movies" else "tv"
+    url = f"https://api.themoviedb.org/3/trending/{tmdb_type}/day"
+    
     response = requests.get(url, params={"api_key": TMDB_API_KEY})
-    movies = response.json().get("results", [])[:10]
+    results = response.json().get("results", [])[:10]
 
+    # Step 3: Cloud SQL Logging
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE IF NOT EXISTS api_logs (id SERIAL, type TEXT, count INT);")
-        cursor.execute("INSERT INTO api_logs (type, count) VALUES (%s, %s);", ("movies", len(movies)))
+        cursor.execute("INSERT INTO api_logs (type, count) VALUES (%s, %s);", (menu, len(results)))
         conn.commit()
         cursor.close()
         conn.close()
     except Exception:
         pass
 
+    # Step 4: Write to Redis Cache
     if redis_client:
-        redis_client.setex(cache_key, 3600, json.dumps(movies))
+        try:
+            redis_client.setex(cache_key, 3600, json.dumps(results))
+        except Exception:
+            pass
 
-    return jsonify({"source": "Live API + Cloud SQL Logged", "results": movies})
+    return render_template("index.html", current_menu=menu, source=source, results=results)
 
-# Required wrapper to let Uvicorn read Flask natively as an ASGI target
+# Uvicorn entry wrapper integration
 from asgiref.wsgi import WsgiToAsgi
 asgi_app = WsgiToAsgi(app)

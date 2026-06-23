@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Scalable Movie Analytics Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0e1117; color: #ffffff; }
+        .sidebar { background-color: #1a1c23; min-height: 100vh; padding: 20px; }
+        .sidebar a { color: #fafafa; text-decoration: none; display: block; padding: 10px; margin: 5px 0; border-radius: 5px; }
+        .sidebar a:hover, .sidebar a.active { background-color: #ff4b4b; color: white; }
+        .movie-card { background-color: #1a1c23; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+        .movie-poster { border-radius: 5px; max-width: 150px; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-3 col-lg-2 sidebar">
+                <h4>Movie Analytics</h4>
+                <hr>
+                <a href="/?menu=movies" class="{% if current_menu == 'movies' %}active{% endif %}">🔥 Trending Movies</a>
+                <a href="/?menu=tv" class="{% if current_menu == 'tv' %}active{% endif %}">📺 Trending TV Shows</a>
+            </div>
+            
+            <div class="col-md-9 col-lg-10 p-4">
+                <h1 class="mb-4">🎬 Scalable Movie Analytics Platform</h1>
+                <p class="text-muted">Data Source: <span class="badge bg-danger">{{ source }}</span></p>
+                <hr>
+
+                <h2 class="mb-4">
+                    {% if current_menu == 'movies' %}🔥 Top 10 Trending Movies
+                    {% else %}📺 Top 10 Trending TV Shows{% endif %}
+                </h2>
+
+                <div class="row">
+                    {% for item in results %}
+                    <div class="col-12 movie-card d-flex align-items-start gap-3">
+                        {% if item.poster_path %}
+                        <img src="https://image.tmdb.org/t/p/w200{{ item.poster_path }}" class="movie-poster" alt="Poster">
+                        {% endif %}
+                        <div>
+                            <h3>{{ loop.index }}. {{ item.title or item.name }} ({{ item.release_date or item.first_air_date }})</h3>
+                            <p class="mt-2 text-secondary">{{ item.overview or "No overview available." }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
