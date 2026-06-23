@@ -1,50 +1,47 @@
 resource "google_cloud_run_v2_service" "app_service" {
-  name     = "movie-analytics-api"
+  name     = "movie-analytics-app" # GitHub Actions isi naam ko target kar raha hai
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   template {
     containers {
-      # -----------------------------------------------------------------
-      # BOOTSTRAP TRICK: Is temporary line ko use karein taaki terraform apply bina image ke pass ho jaye.
-      # Jab GitHub Actions chalega, toh woh is image ko automatically replace kar dega.
-      # -----------------------------------------------------------------
+      # Bootstrap image jo initial apply par pipeline block nahi karegi
       image = "gcr.io/cloudrun/hello"
 
-      # Real image path jo aap baad mein update karenge (Keep it commented for now):
-      # image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.movie_app_repo.repository_id}/movie-app:latest"
-
+      # AUTOMATED ENVIRONMENT VARIABLES (No Manual Work)
       env {
-        name  = "DB_HOST"
-        value = google_sql_database_instance.postgres.private_ip_address
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
       }
       env {
-        name  = "DB_USER"
-        value = google_sql_user.db_user.name
+        name  = "DB_HOST"
+        value = google_sql_database_instance.postgres.private_ip_address # Live DB IP Automatic
       }
       env {
         name  = "DB_NAME"
-        value = google_sql_database.movie_db.name
+        value = google_sql_database.movie_db.name # Live DB Name Automatic
       }
       env {
         name  = "REDIS_HOST"
-        value = google_redis_instance.cache.host
+        value = google_redis_instance.cache.host # Live Redis IP Automatic
       }
 
+      # SECRETS FETCHED VIA SECRET MANAGER
       env {
         name = "DB_PASSWORD"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.db_password.secret_id
+            secret  = "projects/${var.project_id}/secrets/${google_secret_manager_secret.db_password.secret_id}"
             version = "latest"
           }
         }
       }
+
       env {
         name = "TMDB_API_KEY"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.tmdb_api_key.secret_id
+            secret  = "projects/${var.project_id}/secrets/${google_secret_manager_secret.tmdb_api_key.secret_id}"
             version = "latest"
           }
         }
@@ -60,8 +57,6 @@ resource "google_cloud_run_v2_service" "app_service" {
     }
   }
 
-  # Is block mein repository aur secrets dono ka wait karna zaroori hai
-  # Ensure resources are built sequentially to avoid dependency failures
   depends_on = [
     google_sql_database_instance.postgres,
     google_redis_instance.cache,
