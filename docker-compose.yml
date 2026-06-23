@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  fastapi_backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    restart: always # Production-appropriate restart policy
+    environment:
+      - GCP_PROJECT_ID=plated-client-499118-m4
+      - DB_HOST=127.0.0.1
+      - DB_NAME=movies
+      - REDIS_HOST=127.0.0.1
+    healthcheck: # Recommended healthcheck to ensure application stability
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
