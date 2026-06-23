@@ -61,10 +61,10 @@ resource "google_cloud_run_v2_service" "app_service" {
   }
 
   # Is block mein repository aur secrets dono ka wait karna zaroori hai
+  # Ensure resources are built sequentially to avoid dependency failures
   depends_on = [
     google_sql_database_instance.postgres,
     google_redis_instance.cache,
-    google_secret_manager_secret_version.db_password_val,
     google_artifact_registry_repository.movie_app_repo,
     google_secret_manager_secret_iam_member.db_password_accessor,
     google_secret_manager_secret_iam_member.tmdb_api_accessor
