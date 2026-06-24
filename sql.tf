@@ -8,7 +8,7 @@ resource "google_sql_database_instance" "postgres" {
   depends_on = [google_service_networking_connection.private_vpc_connection]
 
   settings {
-    tier = "db-f1-micro" # Development tier. For production, scale up (e.g., db-custom-2-7680)
+    tier = "db-f1-micro"
 
     ip_configuration {
       ipv4_enabled                                  = false
@@ -18,11 +18,10 @@ resource "google_sql_database_instance" "postgres" {
 
     backup_configuration {
       enabled    = true
-      start_time = "02:00" # Automated daily backups at 2 AM
+      start_time = "02:00"
     }
   }
 
-  # Avoids accidental deletion of your database when running terraform destroy
   deletion_protection = false
 }
 
@@ -32,9 +31,9 @@ resource "google_sql_database" "movie_db" {
   instance = google_sql_database_instance.postgres.name
 }
 
-# 3. Database Master User
+# 3. Database Master User (Temporary fallback to avoid user drop error)
 resource "google_sql_user" "db_user" {
-  name     = "movie_admin"
+  name     = "movie_admin"  # "app_user" ki jagah temporary wapas "movie_admin" likhein
   instance = google_sql_database_instance.postgres.name
-  password = "SecurePassword123!" # Ideally sourced via Secret Manager or a TF variable
+  password = "SecurePassword123" # 
 }
