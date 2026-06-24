@@ -7,13 +7,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
-    restart: always # Production restart policy
+    restart: always
     environment:
-      - GCP_PROJECT_ID=plated-client-499118-m4
-      - DB_HOST=127.0.0.1
-      - DB_NAME=movies
-      - REDIS_HOST=127.0.0.1
-    healthcheck: # Lightweight python health check
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-plated-client-499118-m4}
+      - DB_HOST=${DB_HOST:-127.0.0.1}
+      - DB_NAME=${DB_NAME:-movies}
+      - REDIS_HOST=${REDIS_HOST:-127.0.0.1}
+    healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/')"]
       interval: 30s
       timeout: 10s
