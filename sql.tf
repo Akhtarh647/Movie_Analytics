@@ -23,7 +23,7 @@ resource "google_sql_database_instance" "postgres" {
   }
 
   # Avoids accidental deletion of your database when running terraform destroy
-  deletion_protection = false 
+  deletion_protection = false
 }
 
 # 2. PostgreSQL Database

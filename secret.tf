@@ -13,7 +13,7 @@ resource "google_secret_manager_secret" "db_password" {
 # Create Database Password Actual Version Value
 resource "google_secret_manager_secret_version" "db_password_val" {
   secret      = google_secret_manager_secret.db_password.id
-  secret_data = "SecurePassword123!" 
+  secret_data = "SecurePassword123!"
 }
 
 
