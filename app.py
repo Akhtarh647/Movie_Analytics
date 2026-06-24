@@ -4,6 +4,7 @@ import redis
 import requests
 import psycopg2
 import json
+import sys
 from google.cloud import secretmanager
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -98,17 +99,21 @@ def index():
     except Exception:
         results = []
 
-    # Step C: Safe Async-Style Database Logging (Won't crash the page if DB is down)
+    # Step C: Safe Async-Style Database Logging (Fixed Explicit Schema Context)
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS api_logs (id SERIAL, type TEXT, count INT);")
-        cursor.execute("INSERT INTO api_logs (type, count) VALUES (%s, %s);", (menu, len(results)))
+        
+        # Explicitly targets public schema namespace for managed engines
+        cursor.execute("CREATE TABLE IF NOT EXISTS public.api_logs (id SERIAL PRIMARY KEY, type TEXT, count INT);")
+        cursor.execute("INSERT INTO public.api_logs (type, count) VALUES (%s, %s);", (menu, len(results)))
+        
         conn.commit()
         cursor.close()
         conn.close()
     except Exception as db_err:
-        print(f"Database logging skipped/failed: {str(db_err)}")
+        # Pushes logs explicitly to stderr for Cloud Run realtime log sync
+        print(f"DATABASE CONNECTION CRITICAL ERROR: {str(db_err)}", file=sys.stderr, flush=True)
 
     # Step D: Populate Redis Cache
     if redis_client and results:
@@ -120,9 +125,8 @@ def index():
     return render_template("index.html", current_menu=menu, source=source, results=results)
 
 # =================================================================
-# 4. PRODUCTION RUNNER HANDLER (Fixed for Cloud Run PORT=8080)
+# 4. PRODUCTION RUNNER HANDLER
 # =================================================================
 if __name__ == "__main__":
-    # Cloud Run injects the proper container environment port dynamically
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
